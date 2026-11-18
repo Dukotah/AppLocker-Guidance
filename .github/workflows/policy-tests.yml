@@ -16,7 +16,7 @@ jobs:
     env:
       APPLOCKER_TEST_USER: altest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Environment
         shell: powershell
@@ -36,7 +36,7 @@ jobs:
         shell: powershell
         run: |
           $pw = ConvertTo-SecureString ([guid]::NewGuid().ToString() + 'Aa1!') -AsPlainText -Force
-          New-LocalUser -Name $env:APPLOCKER_TEST_USER -Password $pw -NoPasswordExpiry | Out-Null
+          New-LocalUser -Name $env:APPLOCKER_TEST_USER -Password $pw -PasswordNeverExpires | Out-Null
           Add-LocalGroupMember -Group Users -Member $env:APPLOCKER_TEST_USER
           (Get-LocalGroupMember Users).Name
 
@@ -98,7 +98,7 @@ jobs:
             Get-Item "out/$v-AppControl-Audit.cip" | Format-Table Name, Length -AutoSize
           }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: policy-test-output
