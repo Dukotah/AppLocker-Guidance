@@ -1,0 +1,105 @@
+name: policy-tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * 1'   # weekly, picks up new LOLBAS entries for the report
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    env:
+      APPLOCKER_TEST_USER: altest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Environment
+        shell: powershell
+        run: |
+          [Environment]::OSVersion.VersionString
+          $PSVersionTable.PSVersion.ToString()
+          Get-Module -ListAvailable AppLocker, ConfigCI | Format-Table Name, Version, Path -AutoSize
+
+      - name: Install Pester 5 and PSScriptAnalyzer
+        shell: powershell
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 5.7.1 -Force -SkipPublisherCheck -Scope CurrentUser
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+
+      - name: Create a standard user to evaluate rules for (runner only)
+        shell: powershell
+        run: |
+          $pw = ConvertTo-SecureString ([guid]::NewGuid().ToString() + 'Aa1!') -AsPlainText -Force
+          New-LocalUser -Name $env:APPLOCKER_TEST_USER -Password $pw -NoPasswordExpiry | Out-Null
+          Add-LocalGroupMember -Group Users -Member $env:APPLOCKER_TEST_USER
+          (Get-LocalGroupMember Users).Name
+
+      - name: Pester (Windows PowerShell 5.1, with Test-AppLockerPolicy)
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Import-Module Pester -RequiredVersion 5.7.1
+          $c = New-PesterConfiguration
+          $c.Run.Path = './tests'
+          $c.Run.Exit = $true
+          $c.Output.Verbosity = 'Detailed'
+          $c.TestResult.Enabled = $true
+          $c.TestResult.OutputPath = 'out/pester-ps51.xml'
+          Invoke-Pester -Configuration $c
+
+      - name: Pester (PowerShell 7, static checks)
+        shell: pwsh
+        run: |
+          Install-Module Pester -RequiredVersion 5.7.1 -Force -SkipPublisherCheck -Scope CurrentUser
+          Import-Module Pester -RequiredVersion 5.7.1
+          $env:APPLOCKER_TEST_USER = ''
+          $c = New-PesterConfiguration
+          $c.Run.Path = './tests'
+          $c.Run.Exit = $true
+          $c.Output.Verbosity = 'Normal'
+          Invoke-Pester -Configuration $c
+
+      - name: PSScriptAnalyzer (errors only)
+        shell: powershell
+        run: |
+          $r = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error
+          $r | Format-Table RuleName, ScriptName, Line, Message -AutoSize | Out-String -Width 300
+          if ($r) { exit 1 }
+
+      - name: Coverage report (Microsoft block list + LOLBAS)
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          $lol = $null
+          try {
+            Invoke-WebRequest -UseBasicParsing https://lolbas-project.github.io/api/lolbas.json -OutFile out/lolbas.json
+            $lol = 'out/lolbas.json'
+          } catch { Write-Warning "LOLBAS download failed: $_" }
+          foreach ($v in 'Windows10', 'Windows11') {
+            .\tools\Get-PolicyCoverageReport.ps1 -Policy "AppLocker Starter Policy/${v}_AppLocker Starter Policy.xml" -LolbasJson $lol -User $env:APPLOCKER_TEST_USER -OutFile "out/coverage-$v.md"
+          }
+          Get-Content out/coverage-Windows11.md | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Convert to App Control for Business and compile with ConfigCI
+        shell: powershell
+        run: |
+          foreach ($v in 'Windows10', 'Windows11') {
+            $xml = "out/$v-AppControl-Audit.xml"
+            .\tools\ConvertTo-AppControlPolicy.ps1 -AppLockerPolicy "AppLocker Starter Policy/${v}_AppLocker Starter Policy.xml" -OutFile $xml | Format-List
+            $rules = @(Get-CIPolicy -FilePath $xml)
+            "Get-CIPolicy rules: " + (($rules | Group-Object TypeId | ForEach-Object { '{0}={1}' -f $_.Name, $_.Count }) -join ' ')
+            ConvertFrom-CIPolicy -XmlFilePath (Resolve-Path $xml).Path -BinaryFilePath "$PWD\out\$v-AppControl-Audit.cip" | Out-Null
+            Get-Item "out/$v-AppControl-Audit.cip" | Format-Table Name, Length -AutoSize
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: policy-test-output
+          path: out/
