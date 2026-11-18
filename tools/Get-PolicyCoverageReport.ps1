@@ -38,7 +38,9 @@ function Get-Decision([string]$File) {
 function Find-Binary([string]$Name, [string[]]$Candidates) {
     foreach ($c in $Candidates) {
         $p = [Environment]::ExpandEnvironmentVariables(($c -replace '^C:\\Windows', '%windir%' -replace '^C:\\Program Files \(x86\)', '%ProgramFiles(x86)%' -replace '^C:\\Program Files', '%ProgramFiles%'))
-        if ($p -notmatch '[\*\?]' -and (Test-Path -LiteralPath $p -PathType Leaf)) { return $p }
+        # LOLBAS paths can hold placeholders such as C:\Users\<username>\... ; skip those.
+        if ($p -match '[\*\?<>"|]') { continue }
+        if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
     }
     return $null
 }
