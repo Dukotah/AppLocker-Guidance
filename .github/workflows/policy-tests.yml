@@ -101,9 +101,8 @@ jobs:
           foreach ($v in 'Windows10', 'Windows11') {
             $xml = "out/$v-AppControl-Audit.xml"
             .\tools\ConvertTo-AppControlPolicy.ps1 -AppLockerPolicy "AppLocker Starter Policy/${v}_AppLocker Starter Policy.xml" -OutFile $xml | Format-List
-            $rules = @(Get-CIPolicy -FilePath $xml)
-            "Get-CIPolicy: {0} rules" -f $rules.Count
-            $rules | Select-Object -First 3 | Format-List * | Out-String -Width 200
+            $rules = @(Get-CIPolicy -FilePath $xml | ForEach-Object { $_ })
+            'Get-CIPolicy: ' + (($rules | Group-Object TypeId | ForEach-Object { '{0}={1}' -f $_.Name, $_.Count }) -join ' ')
             ConvertFrom-CIPolicy -XmlFilePath (Resolve-Path $xml).Path -BinaryFilePath "$PWD\out\$v-AppControl-Audit.cip" | Out-Null
             Get-Item "out/$v-AppControl-Audit.cip" | Format-Table Name, Length -AutoSize
           }
