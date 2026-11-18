@@ -86,6 +86,15 @@ jobs:
           }
           Get-Content out/coverage-Windows11.md | Add-Content $env:GITHUB_STEP_SUMMARY
 
+      - name: Core Windows DLLs hit by the Dll deny rules (standard user and administrator)
+        shell: powershell
+        run: |
+          $files = 'shell32.dll', 'setupapi.dll', 'zipfldr.dll', 'url.dll', 'ieframe.dll' | ForEach-Object { "$env:windir\System32\$_" }
+          foreach ($u in $env:APPLOCKER_TEST_USER, $env:USERNAME) {
+            Test-AppLockerPolicy -XmlPolicy 'AppLocker Starter Policy/Windows11_AppLocker Starter Policy.xml' -Path $files -User $u |
+              Select-Object @{ n = 'User'; e = { $u } }, FilePath, PolicyDecision, MatchingRule | Format-Table -AutoSize | Out-String -Width 300
+          }
+
       - name: Convert to App Control for Business and compile with ConfigCI
         shell: powershell
         run: |
@@ -93,7 +102,8 @@ jobs:
             $xml = "out/$v-AppControl-Audit.xml"
             .\tools\ConvertTo-AppControlPolicy.ps1 -AppLockerPolicy "AppLocker Starter Policy/${v}_AppLocker Starter Policy.xml" -OutFile $xml | Format-List
             $rules = @(Get-CIPolicy -FilePath $xml)
-            "Get-CIPolicy rules: " + (($rules | Group-Object TypeId | ForEach-Object { '{0}={1}' -f $_.Name, $_.Count }) -join ' ')
+            "Get-CIPolicy: {0} rules" -f $rules.Count
+            $rules | Select-Object -First 3 | Format-List * | Out-String -Width 200
             ConvertFrom-CIPolicy -XmlFilePath (Resolve-Path $xml).Path -BinaryFilePath "$PWD\out\$v-AppControl-Audit.cip" | Out-Null
             Get-Item "out/$v-AppControl-Audit.cip" | Format-Table Name, Length -AutoSize
           }
